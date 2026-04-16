@@ -26,7 +26,7 @@ The dataset covers **900+ leaf samples (25+ species)** across broadleaf and pine
 0_data_preparation/         ←  inspect raw data, onboard datasets, validate before training
          │
          ▼
-1_phase1_model_comparison/  ←  train & compare 10 architectures under identical conditions
+1_phase1_model_comparison/  ←  train & compare 9 architectures under identical conditions
          │
          ▼
 2_phase2_fine_tuning/       ←  fine-tune top 2–3 models  [coming soon]
@@ -53,7 +53,7 @@ Training-Leaf-microCT-Segmentation/
 ├── 1_phase1_model_comparison/
 │   ├── 0_compute_class_weights.py      ← compute per-class weights
 │   ├── 1_train_unet_resnet101.ipynb    ← single-GPU walkthrough (start here)
-│   ├── 2_train_*.py                    ← 10 training scripts (multi-GPU, SLURM)
+│   ├── 2_train_*.py                    ← 9 training scripts (multi-GPU, SLURM)
 │   ├── 3_submit_*.sh                   ← SLURM job submission scripts
 │   └── 4_evaluate.py                   ← evaluate on independent test dataset
 │

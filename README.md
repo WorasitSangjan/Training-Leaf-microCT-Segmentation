@@ -1,5 +1,12 @@
 # Training-Leaf-microCT-Segmentation
 
+![License](https://img.shields.io/badge/License-MIT-blue.svg)
+![Open Source](https://img.shields.io/badge/Open%20Source-Yes-brightgreen.svg)
+[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
+[![Platform](https://img.shields.io/badge/Platform-PyTorch%20%7C%20NERSC-orange.svg)](https://pytorch.org/)
+![Science](https://img.shields.io/badge/Science-Plant%20Phenomics-green.svg)
+![Research](https://img.shields.io/badge/Research-USDA--ARS-navy.svg)
+
 This repository documents the full training pipeline for leaf microCT segmentation — from raw dataset preparation through model comparison and fine-tuning. The best model produced from this pipeline powers the **[Leaf microCT Segmentation Web App](https://github.com/WorasitSangjan/WebApp-Leaf-microCT-Segmentation)**.
 
 ---

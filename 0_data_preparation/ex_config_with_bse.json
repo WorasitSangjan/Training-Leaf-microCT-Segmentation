@@ -1,0 +1,23 @@
+{
+  "name": "ex_config_with_bse",
+  "image_dir": "/pscratch/sd/w/worasit/datasets/plant_2/images",
+  "mask_dir": "/pscratch/sd/w/worasit/datasets/plant_2/masks",
+  "num_classes": 5,
+  "ignore_index": 254,
+  "has_bse_label": true,
+  "class_names": [
+    "Background",
+    "Epidermis",
+    "Vascular_Region",
+    "Mesophyll",
+    "Air_Space"
+  ],
+  "mapping": {
+    "0": 3,
+    "85": 1,
+    "152": 2,
+    "170": 0,
+    "180": 2,
+    "255": 4
+  }
+}

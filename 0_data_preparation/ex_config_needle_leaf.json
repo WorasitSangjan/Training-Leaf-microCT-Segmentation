@@ -1,0 +1,29 @@
+{
+  "name": "ex_config_needle_leaf",
+  "image_dir": "/pscratch/sd/w/worasit/datasets/plant_3/images",
+  "mask_dir": "/pscratch/sd/w/worasit/datasets/plant_3/masks",
+  "num_classes": 5,
+  "ignore_index": 254,
+  "has_bse_label": false,
+  "has_resin_ducts": true,
+  "has_transfusion_tissue": true,
+  "class_names": [
+    "Background",
+    "Epidermis",
+    "Vascular_Region",
+    "Mesophyll",
+    "Air_Space"
+  ],
+  "mapping": {
+    "85": 0,
+    "170": 1,
+    "103": 2,
+    "127": 2,
+    "0": 3,
+    "255": 4,
+    "200": 254
+  },
+  "_notes": {
+    "pinus_segmentation": "Santiago_Trueba"
+  }
+}

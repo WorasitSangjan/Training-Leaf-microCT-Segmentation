@@ -12,7 +12,7 @@ Model options:
 Usage:
 
   # Evaluate with explicit config files
-  python evaluate.py \
+  python 2_evaluate.py \
     --model unet_resnet101 \
     --checkpoint /pscratch/sd/w/worasit/outputs/models_UNet_ResNet101/best_model.pth \
     --configs /pscratch/sd/w/worasit/configs/tab_vjucundum3.json \
@@ -21,7 +21,7 @@ Usage:
     --per_image
 
   # Auto-discover all t*.json configs in a directory
-  python evaluate.py \
+  python 2_evaluate.py \
     --model eomt_vitl \
     --checkpoint /pscratch/sd/w/worasit/outputs/Pharse/Phase_9_v5/models_EoMT_ViTL/best_model.pth \
     --test_configs_dir /pscratch/sd/w/worasit/configs \
@@ -304,15 +304,48 @@ class SegFormerWrapper(nn.Module):
         return F.interpolate(logits, size=(H, W), mode='bilinear', align_corners=False)
 
 
-class Mask2FormerWrapper(nn.Module):
-    """HuggingFace Mask2Former/Swin-B — grayscale input via channel expansion."""
+class SegFormerB4V2Wrapper(nn.Module):
+    """Matches train_segformer_v2.py: conv_in (1->3) + standard SegFormer-B4.
+
+    Different from SegFormerWrapper above — that one modifies SegFormer's first
+    conv to take 1 channel. This one keeps a standard 3-channel SegFormer and
+    prepends a conv_in (1->3) layer. State dict keys: conv_in.*, model.*
+    """
     def __init__(self, num_classes,
-                 pretrained="facebook/mask2former-swin-base-IN21k-ade-semantic"):
+                 pretrained="nvidia/segformer-b4-finetuned-ade-512-512"):
+        super().__init__()
+        from transformers import SegformerForSemanticSegmentation, SegformerConfig
+        self.conv_in = nn.Conv2d(1, 3, kernel_size=1)
+        try:
+            self.model = SegformerForSemanticSegmentation.from_pretrained(
+                pretrained, num_labels=num_classes,
+                ignore_mismatched_sizes=True, local_files_only=True)
+        except Exception:
+            cfg = SegformerConfig.from_pretrained(pretrained, local_files_only=True)
+            cfg.num_labels = num_classes
+            self.model = SegformerForSemanticSegmentation(cfg)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        if C == 1:
+            x = self.conv_in(x)
+        logits = self.model(pixel_values=x).logits        # (B, C, H/4, W/4)
+        return F.interpolate(logits, size=(H, W), mode='bilinear', align_corners=False)
+
+
+class Mask2FormerWrapper(nn.Module):
+    """HuggingFace Mask2Former — grayscale input via channel expansion."""
+    def __init__(self, num_classes,
+                 pretrained="facebook/mask2former-swin-base-IN21k-ade-semantic",
+                 revision=None, use_safetensors=False):
         super().__init__()
         from transformers import Mask2FormerForUniversalSegmentation
+        kwargs = dict(num_labels=num_classes,
+                      ignore_mismatched_sizes=True, local_files_only=True)
+        if revision is not None: kwargs['revision'] = revision
+        if use_safetensors: kwargs['use_safetensors'] = True
         self.model = Mask2FormerForUniversalSegmentation.from_pretrained(
-            pretrained, num_labels=num_classes,
-            ignore_mismatched_sizes=True, local_files_only=True)
+            pretrained, **kwargs)
         self.num_classes = num_classes
 
     def forward(self, x):
@@ -337,8 +370,23 @@ def build_model(model_type, num_classes):
     # ---- HuggingFace transformers ----
     if mt == "segformer":
         return SegFormerWrapper(num_classes=num_classes)
+    if mt == "segformer_v2":
+        return SegFormerB4V2Wrapper(num_classes=num_classes)
     if mt == "mask2former":
         return Mask2FormerWrapper(num_classes=num_classes)
+    if mt == "mask2former_swint":
+        return Mask2FormerWrapper(
+            num_classes=num_classes,
+            pretrained="facebook/mask2former-swin-tiny-ade-semantic",
+            revision="5a3eafd79a8612b459631f04e5c62eab3b403370",
+            use_safetensors=True,
+        )
+    if mt == "mask2former_swinl":
+        return Mask2FormerWrapper(
+            num_classes=num_classes,
+            pretrained="facebook/mask2former-swin-large-ade-semantic",
+            use_safetensors=True,
+        )
 
     # ---- segmentation_models_pytorch ----
     try:
@@ -412,7 +460,8 @@ def main():
 
     parser.add_argument("--model", required=True,
                         choices=["unet_resnet101", "deeplab_efficientnet", "deeplab_mitb4",
-                                 "fpn_mitb4", "fpn_mitb5", "segformer", "mask2former",
+                                 "fpn_mitb4", "fpn_mitb5", "segformer", "segformer_v2",
+                                 "mask2former", "mask2former_swint", "mask2former_swinl",
                                  "eomt_vitb", "eomt_vitl"])
     parser.add_argument("--checkpoint", required=True, help="Path to best_model.pth")
 
@@ -430,6 +479,11 @@ def main():
                         help="Also save per-image IoU/Dice to CSV")
     parser.add_argument("--output_dir",  default=None,
                         help="Where to save CSV results (default: checkpoint directory)")
+    parser.add_argument("--tag",         default=None,
+                        help="Optional label appended to CSV filename "
+                             "(e.g. --tag broadleaf -> eval_<model>_broadleaf_overall.csv). "
+                             "Use this to avoid overwriting CSVs when evaluating the same "
+                             "model on multiple test sets.")
 
     parser.add_argument("--num_classes", type=int, default=NUM_CLASSES)
     parser.add_argument("--patch_size",  type=int, default=PATCH_SIZE)
@@ -517,9 +571,16 @@ def main():
     model.load_state_dict(state)
 
     model = model.to(device)
-    if num_gpus > 1:
+    # Mask2Former uses cross-attention between internal submodules — DataParallel
+    # breaks this by replicating the model mid-forward. Use single GPU instead.
+    _ddp_incompatible = {"mask2former", "mask2former_swint", "mask2former_swinl"}
+    if num_gpus > 1 and args.model.lower() not in _ddp_incompatible:
         model = nn.DataParallel(model)
         print(f"Using DataParallel across {num_gpus} GPUs")
+    else:
+        if args.model.lower() in _ddp_incompatible:
+            effective_batch = args.batch_size * num_gpus  # use full batch on 1 GPU
+            print(f"Single GPU mode for {args.model} (DataParallel incompatible, batch={effective_batch})")
     model.eval()
 
     saved_epoch = checkpoint.get('epoch', '?')
@@ -661,7 +722,8 @@ def main():
     print(f"Mean Dice : {np.mean(numeric_dice):.4f}")
     print("=" * 65)
 
-    overall_csv = os.path.join(out_dir, f"eval_{args.model}_overall.csv")
+    _tag_suffix = f"_{args.tag}" if args.tag else ""
+    overall_csv = os.path.join(out_dir, f"eval_{args.model}{_tag_suffix}_overall.csv")
     df.to_csv(overall_csv, index=False)
     print(f"\nOverall CSV : {overall_csv}")
 
@@ -686,7 +748,7 @@ def main():
             per_img_rows.append(row)
 
         per_img_df  = pd.DataFrame(per_img_rows)
-        per_img_csv = os.path.join(out_dir, f"eval_{args.model}_per_image.csv")
+        per_img_csv = os.path.join(out_dir, f"eval_{args.model}{_tag_suffix}_per_image.csv")
         per_img_df.to_csv(per_img_csv, index=False)
         print(f"Per-image CSV: {per_img_csv}")
 

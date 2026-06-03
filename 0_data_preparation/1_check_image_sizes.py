@@ -1,18 +1,30 @@
 """
-Check image sizes across all dataset configs used in training + test sets.
-Reports min/max/mean dimensions per config and flags images smaller than 512px.
+Step 1: audit image sizes and image/mask resolution matches for all training/test configs.
+
+This is the single pre-training check script:
+  - Reports min/max/mean image dimensions per config
+  - Flags images smaller than the selected patch-size threshold
+  - Checks paired image/mask dimensions and reports mismatches
+
+Use 2_prepare_datasets.py only after this audit identifies image/mask dimension
+mismatches that should be repaired.
 
 Usage:
-    python check_image_sizes.py
+    python 0_data_preparation/1_check_image_sizes.py
+    python 0_data_preparation/1_check_image_sizes.py --min-size 320
+    python 0_data_preparation/1_check_image_sizes.py --configs /path/to/a.json /path/to/b.json
 """
 
-import os
+import argparse
 import json
-import numpy as np
-from PIL import Image
+import os
 from pathlib import Path
 
+import numpy as np
+from PIL import Image
+
 SCRATCH = "/pscratch/sd/w/worasit"
+IMAGE_EXTS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
 
 # ============================================================
 # Exact configs from train_11_eomt_vitl.py (same for all 4 models)
@@ -78,7 +90,7 @@ PINE_CONFIGS = [
     f"{SCRATCH}/configs/st_pinus_ppg1.json",
     f"{SCRATCH}/configs/st_pinus_ppg2.json",
     f"{SCRATCH}/configs/st_pinus_pr1.json",
-    f"{SCRATCH}/configs/st_pinus_pr2.json",   
+    f"{SCRATCH}/configs/st_pinus_pr2.json",
     f"{SCRATCH}/configs/st_pinus_pse1.json",
     f"{SCRATCH}/configs/st_pinus_pth5.json",
     f"{SCRATCH}/configs/st_pinus_tm10.json",
@@ -93,14 +105,66 @@ TEST_CONFIGS = [
     f"{SCRATCH}/configs/trh_wheat.json",
 ]
 
-def check_configs(config_list, section_name):
-    print(f"\n{'='*95}")
+
+def iter_image_files(directory, allowed_names=None):
+    """Yield non-hidden image files, optionally filtered by names from file_list."""
+    allowed = set(allowed_names or [])
+    allowed_stems = {Path(name).stem for name in allowed}
+    for fname in sorted(os.listdir(directory)):
+        fpath = os.path.join(directory, fname)
+        if fname.startswith(".") or os.path.isdir(fpath):
+            continue
+        if Path(fname).suffix.lower() not in IMAGE_EXTS:
+            continue
+        if allowed and fname not in allowed and Path(fname).stem not in allowed_stems:
+            continue
+        yield fname
+
+
+def load_file_list(path):
+    if not path:
+        return None
+    if not os.path.isfile(path):
+        print(f"    WARN: file_list not found: {path}")
+        return None
+    with open(path) as f:
+        data = json.load(f)
+    if isinstance(data, dict):
+        data = data.get("files") or data.get("images") or data.get("filenames") or []
+    return [str(item) for item in data]
+
+
+def build_mask_index(mask_dir):
+    if not mask_dir or not os.path.isdir(mask_dir):
+        return {}
+    masks = {}
+    for fname in iter_image_files(mask_dir):
+        if ".orig." in fname:
+            continue
+        masks[Path(fname).stem] = fname
+    return masks
+
+
+def format_examples(items, limit=2):
+    examples = ", ".join(items[:limit])
+    return examples + ("..." if len(items) > limit else "")
+
+
+def check_configs(config_list, section_name, min_size):
+    print(f"\n{'=' * 112}")
     print(f" {section_name} ({len(config_list)} configs)")
-    print(f"{'='*95}")
-    print(f"  {'Config':<28} {'N':>4} {'MinH':>6} {'MinW':>6} {'MaxH':>6} {'MaxW':>6} {'MeanH':>7} {'MeanW':>7} {'<512':>5} {'SmallImages'}")
-    print(f"  {'-'*28} {'-'*4} {'-'*6} {'-'*6} {'-'*6} {'-'*6} {'-'*7} {'-'*7} {'-'*5} {'-'*30}")
+    print(f"{'=' * 112}")
+    print(
+        f"  {'Config':<28} {'N':>4} {'MinH':>6} {'MinW':>6} {'MaxH':>6} {'MaxW':>6} "
+        f"{'MeanH':>7} {'MeanW':>7} {f'<{min_size}':>6} {'MaskMismatch':>12}  Examples"
+    )
+    print(
+        f"  {'-' * 28} {'-' * 4} {'-' * 6} {'-' * 6} {'-' * 6} {'-' * 6} "
+        f"{'-' * 7} {'-' * 7} {'-' * 6} {'-' * 12}  {'-' * 30}"
+    )
 
     too_small = []
+    mismatched = []
     all_sizes = []
 
     for cfg_path in config_list:
@@ -111,48 +175,76 @@ def check_configs(config_list, section_name):
         with open(cfg_path) as f:
             cfg = json.load(f)
 
-        name      = cfg.get("name", Path(cfg_path).stem)
+        name = cfg.get("name", Path(cfg_path).stem)
         image_dir = cfg.get("image_dir", "")
+        mask_dir = cfg.get("mask_dir", "")
+        allowed_names = load_file_list(cfg.get("file_list"))
 
         if not os.path.exists(image_dir):
             print(f"  {name:<28} image_dir not found")
             continue
 
-        heights, widths, small_imgs = [], [], []
-        for fname in sorted(os.listdir(image_dir)):
-            fpath = os.path.join(image_dir, fname)
-            if fname.startswith(".") or os.path.isdir(fpath):
-                continue
+        mask_index = build_mask_index(mask_dir)
+        heights, widths, small_imgs, mismatch_examples = [], [], [], []
+
+        for fname in iter_image_files(image_dir, allowed_names):
+            img_path = os.path.join(image_dir, fname)
             try:
-                img = Image.open(fpath)
-                w, h = img.size
-                heights.append(h)
-                widths.append(w)
-                if h < 512 or w < 512:
-                    small_imgs.append(f"{fname}({h}x{w})")
-            except Exception:
+                with Image.open(img_path) as img:
+                    img_w, img_h = img.size
+            except Exception as exc:
+                print(f"    WARN: could not open image {img_path}: {exc}")
                 continue
+
+            heights.append(img_h)
+            widths.append(img_w)
+            if img_h < min_size or img_w < min_size:
+                small_imgs.append(f"{fname}({img_h}x{img_w})")
+
+            mask_name = mask_index.get(Path(fname).stem)
+            if mask_dir and mask_name:
+                mask_path = os.path.join(mask_dir, mask_name)
+                try:
+                    with Image.open(mask_path) as mask:
+                        mask_w, mask_h = mask.size
+                except Exception as exc:
+                    print(f"    WARN: could not open mask {mask_path}: {exc}")
+                    continue
+                if (img_w, img_h) != (mask_w, mask_h):
+                    mismatch_examples.append(
+                        f"{fname}: img {img_w}x{img_h}, mask {mask_w}x{mask_h}"
+                    )
+            elif mask_dir:
+                mismatch_examples.append(f"{fname}: missing mask")
 
         if not heights:
             print(f"  {name:<28} no images found")
             continue
 
-        min_h  = min(heights)
-        min_w  = min(widths)
-        max_h  = max(heights)
-        max_w  = max(widths)
+        min_h = min(heights)
+        min_w = min(widths)
+        max_h = max(heights)
+        max_w = max(widths)
         mean_h = np.mean(heights)
         mean_w = np.mean(widths)
-        flag   = "YES" if small_imgs else ""
 
         if small_imgs:
             too_small.append((name, min_h, min_w, small_imgs))
+        if mismatch_examples:
+            mismatched.append((name, mismatch_examples))
 
         all_sizes.append((min_h, min_w))
+        examples = []
+        if small_imgs:
+            examples.extend(small_imgs[:2])
+        if mismatch_examples:
+            examples.extend(mismatch_examples[:2])
 
-        small_str = ", ".join(small_imgs[:2]) + ("..." if len(small_imgs) > 2 else "")
-        print(f"  {name:<28} {len(heights):>4} {min_h:>6} {min_w:>6} {max_h:>6} {max_w:>6} "
-              f"{mean_h:>7.0f} {mean_w:>7.0f} {flag:>5}  {small_str}")
+        print(
+            f"  {name:<28} {len(heights):>4} {min_h:>6} {min_w:>6} {max_h:>6} {max_w:>6} "
+            f"{mean_h:>7.0f} {mean_w:>7.0f} {len(small_imgs):>6} {len(mismatch_examples):>12}  "
+            f"{format_examples(examples)}"
+        )
 
     if all_sizes:
         overall_min_h = min(s[0] for s in all_sizes)
@@ -160,29 +252,77 @@ def check_configs(config_list, section_name):
         print(f"\n  Overall min H={overall_min_h}, min W={overall_min_w}")
         print(f"  Safe PATCH_SIZE = {min(overall_min_h, overall_min_w)}")
 
-    return too_small
+    return too_small, mismatched
 
-# Run checks
-small_broadleaf = check_configs(BROADLEAF_CONFIGS, "BROADLEAF TRAINING CONFIGS")
-small_pine      = check_configs(PINE_CONFIGS,      "PINE TRAINING CONFIGS")
-small_test      = check_configs(TEST_CONFIGS,      "TEST CONFIGS")
 
-# Summary
-all_small = small_broadleaf + small_pine + small_test
-print(f"\n{'='*95}")
-print(f" SUMMARY — Configs with images < 512px: {len(all_small)}")
-print(f"{'='*95}")
-if all_small:
-    for name, h, w, imgs in sorted(all_small, key=lambda x: min(x[1], x[2])):
-        print(f"  {name:<30} min H={h}, min W={w}  →  {len(imgs)} small image(s)")
-        for img in imgs:
-            print(f"    - {img}")
-else:
-    print("  All images >= 512px — safe to use PATCH_SIZE=512 for all configs")
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--min-size",
+        type=int,
+        default=512,
+        help="Flag images with either dimension below this size (default: 512)",
+    )
+    parser.add_argument(
+        "--configs",
+        nargs="+",
+        help="Optional explicit config path(s). If omitted, the built-in train/test config groups are checked.",
+    )
+    return parser.parse_args()
 
-print(f"\n{'='*95}")
-print(" RECOMMENDATION")
-print(f"{'='*95}")
-print("  - Configs with min dim >= 512  → include in PATCH_SIZE=512 training")
-print("  - Configs with min dim 320-511 → move to test set (evaluate with PATCH_SIZE=320)")
-print("  - Configs with min dim < 320   → exclude entirely")
+
+def main():
+    args = parse_args()
+
+    if args.configs:
+        sections = [("CUSTOM CONFIGS", args.configs)]
+    else:
+        sections = [
+            ("BROADLEAF TRAINING CONFIGS", BROADLEAF_CONFIGS),
+            ("PINE TRAINING CONFIGS", PINE_CONFIGS),
+            ("TEST CONFIGS", TEST_CONFIGS),
+        ]
+
+    all_small = []
+    all_mismatched = []
+    for section_name, configs in sections:
+        small, mismatched = check_configs(configs, section_name, args.min_size)
+        all_small.extend(small)
+        all_mismatched.extend(mismatched)
+
+    print(f"\n{'=' * 112}")
+    print(f" SUMMARY")
+    print(f"{'=' * 112}")
+    print(f"  Configs with images < {args.min_size}px: {len(all_small)}")
+    if all_small:
+        for name, h, w, imgs in sorted(all_small, key=lambda x: min(x[1], x[2])):
+            print(f"  {name:<30} min H={h}, min W={w} -> {len(imgs)} small image(s)")
+            for img in imgs[:5]:
+                print(f"    - {img}")
+            if len(imgs) > 5:
+                print(f"    ... {len(imgs) - 5} more")
+    else:
+        print(f"  All images >= {args.min_size}px")
+
+    print(f"\n  Configs with image/mask dimension mismatches: {len(all_mismatched)}")
+    if all_mismatched:
+        for name, examples in all_mismatched:
+            print(f"  {name:<30} {len(examples)} mismatch(es)")
+            for example in examples[:5]:
+                print(f"    - {example}")
+            if len(examples) > 5:
+                print(f"    ... {len(examples) - 5} more")
+    else:
+        print("  All matched image/mask pairs have identical dimensions")
+
+    print(f"\n{'=' * 112}")
+    print(" RECOMMENDATION")
+    print(f"{'=' * 112}")
+    print(f"  - Image-only size issues affect PATCH_SIZE selection; use --min-size to match your training patch.")
+    print("  - Image/mask dimension mismatches should be fixed before training.")
+    print("  - Use 2_prepare_datasets.py with the same config(s) from this audit to repair mismatched masks.")
+    print("  - Missing masks, wrong file names, and semantic label problems still need manual review.")
+
+
+if __name__ == "__main__":
+    main()

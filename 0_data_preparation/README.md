@@ -13,7 +13,10 @@ New dataset arrives
 0_dataset_checklist.ipynb   ←  inspect images/masks, create config file
        │
        ▼
-1_check_image_sizes.py      ←  validate all configs, confirm safe PATCH_SIZE
+1_check_image_sizes.py      ←  validate sizes + image/mask resolution matches
+       │
+       ▼
+2_prepare_datasets.py       ←  fix image/mask size mismatches from configs
        │
        ▼
    Ready to train
@@ -34,16 +37,44 @@ Covers:
 - Creating a JSON config file for the new dataset
 
 ### `1_check_image_sizes.py`
-Run this across all configs before starting training. Reports min/max/mean image dimensions per dataset and flags any images smaller than 512px.
+Run this across all configs before starting training. Reports min/max/mean image dimensions per dataset, flags images smaller than the selected patch-size threshold, and checks that paired image/mask files have identical pixel dimensions.
 
 ```bash
-python 1_check_image_sizes.py
+python 0_data_preparation/1_check_image_sizes.py
 ```
 
 Output:
 - Per-dataset size summary
 - Safe `PATCH_SIZE` recommendation
 - List of configs with images below threshold
+- List of configs with image/mask dimension mismatches
+
+### `2_prepare_datasets.py`
+General repair script for image/mask dimension mismatches. This is not a duplicate of `1_check_image_sizes.py`: step 1 audits and reports problems; step 2 changes mask files only when you pass `--apply`.
+
+Dry-run a specific config:
+
+```bash
+python 0_data_preparation/2_prepare_datasets.py --configs /path/to/config.json
+```
+
+Apply after reviewing the dry-run:
+
+```bash
+python 0_data_preparation/2_prepare_datasets.py --configs /path/to/config.json --apply
+```
+
+Repair every config in a directory:
+
+```bash
+python 0_data_preparation/2_prepare_datasets.py --config-dir /path/to/configs
+```
+
+Restore masks from `.orig` backups:
+
+```bash
+python 0_data_preparation/2_prepare_datasets.py --configs /path/to/config.json --restore --apply
+```
 
 ---
 
@@ -91,7 +122,7 @@ Each dataset is described by a JSON config file. The training pipeline loads the
 
 ### Examples
 
-**Broadleaf** — `configs/devin1_no_bse.json`
+**Broadleaf** — `configs/no_bse.json`
 ```json
 {
   "name": "devin1_no_bse",
@@ -127,3 +158,31 @@ Each dataset is described by a JSON config file. The training pipeline loads the
 ```
 
 Note that pine configs can map multiple pixel values to the same class index (e.g. `103` and `127` both map to class 2 — Vascular Region), and use extra metadata fields like `has_resin_ducts` to document dataset-specific anatomy.
+
+---
+
+## Dataset Composition
+
+The harmonized corpus combines annotated 2D leaf microCT cross-sections across angiosperms, gymnosperms, and wheat. Training and test slices refer to annotated cross-sectional images. The public dataset database is available at [Leaf CT Hub](https://leafcthub.github.io/).
+
+| Species Group | Family | Species | Training Slices | Test Slices |
+|---------------|--------|--------:|----------------:|------------:|
+| **Angiosperms** |  |  |  |  |
+| Almond | Rosaceae | 1 | 60 | - |
+| Arabidopsis | Brassicaceae | 1 | 56 | - |
+| Grape | Vitaceae | 1 | 193 | - |
+| Lantana | Verbenaceae | 1 | 154 | 8 |
+| Magnolia | Magnoliaceae | 1 | 11 | - |
+| Oak | Fagaceae | 6 | 108 | - |
+| Olive | Oleaceae | 1 | 82 | 2 |
+| Pistachio | Anacardiaceae | 1 | 84 | - |
+| Tomato | Solanaceae | 1 | 42 | - |
+| Viburnum | Adoxaceae | 12 | 96 | 6 |
+| Walnut | Juglandaceae | 1 | 56 | 0 |
+| Wheat | Poaceae | 1 | - | 6 |
+| **Gymnosperms** |  |  |  |  |
+| Conifer (Pinaceae) | Pinaceae | 23 | 171 | 6 |
+| Conifer (Araucariaceae) | Araucariaceae | 1 | - | 6 |
+| **Total** | **14 families** | **~52** | **1,113** | **34** |
+
+Conifer (Pinaceae) samples are needle cross-sections. Conifer (Araucariaceae; *Araucaria angustifolia*) is a lamina-like conifer leaf section.

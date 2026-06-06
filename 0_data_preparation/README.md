@@ -183,6 +183,6 @@ The harmonized corpus combines annotated 2D leaf microCT cross-sections across a
 | **Gymnosperms** |  |  |  |  |
 | Conifer (Pinaceae) | Pinaceae | 23 | 171 | 6 |
 | Conifer (Araucariaceae) | Araucariaceae | 1 | - | 6 |
-| **Total** | **14 families** | **~52** | **1,113** | **34** |
+| **Total** | **14 families** | **52** | **1,113** | **34** |
 
 Conifer (Pinaceae) samples are needle cross-sections. Conifer (Araucariaceae; *Araucaria angustifolia*) is a lamina-like conifer leaf section.

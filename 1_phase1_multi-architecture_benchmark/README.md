@@ -129,4 +129,4 @@ Outputs:
 
 ![Phase 1 multi-architecture benchmark results](images/result_phase1.png)
 
-**Figure. Phase 1 multi-architecture benchmark.** Comparison of nine semantic segmentation architectures trained under identical Phase 1 settings and evaluated on held-out leaf microCT test datasets. The benchmark spans CNN, transformer-encoder, query-based, and DINOv3-backed architectures to identify the strongest candidates for downstream fine-tuning. (a) Mean IoU per model grouped by leaf functional group. (b) Per-class IoU heatmap averaged across all leaf functional groups.
+**Figure. Phase 1 multi-architecture benchmark.** Phase 1: mean Intersection over Union (mIoU) for the screening of nine segmentation architectures. (a) mIoU by held-out evaluation group; (b) mIoU by anatomical class. Error bars represent ± one SD of per-image variability (panel a: n = 16 for Broadleaf and n = 6 each for Pinaceae, Araucariaceae, and Wheat; panel b: n = 34 per architecture).

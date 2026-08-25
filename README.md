@@ -182,3 +182,10 @@ See `2_phase2_fine_tuning/README.md` for the best-result model table, output pat
 - **Leaf CT Hub:** [leafcthub.github.io](https://leafcthub.github.io/) — dataset database and corpus documentation.
 - **Segmentation App:** [Hugging Face Space](https://huggingface.co/spaces/WorasitSangjan/Leaf-CT-Segmentation) — interactive application for using the final leaf microCT segmentation models.
 - **Web App Source:** [WebApp-Leaf-microCT-Segmentation](https://github.com/WorasitSangjan/WebApp-Leaf-microCT-Segmentation) — source code for the application, including access to the four final fine-tuned Phase 2 models.
+
+---
+
+## Contact
+
+- **Lead Author:** Worasit Sangjan - worasitsangjan.ws@gmail.com
+- **Corresponding Author:** Devin A. Rippner - devin.rippner@usda.gov

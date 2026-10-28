@@ -186,5 +186,5 @@ See `2_phase2_fine_tuning/README.md` for the best-result model table, output pat
 
 ## Contact
 
-- **Lead Author:** Worasit Sangjan - worasitsangjan.ws@gmail.com
+- **Lead Author:** Worasit Sangjan - [worasitsangjan.github.io](https://worasitsangjan.github.io/)
 - **Corresponding Author:** Devin A. Rippner - devin.rippner@usda.gov
